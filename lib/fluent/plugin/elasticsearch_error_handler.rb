@@ -4,23 +4,33 @@ require_relative 'elasticsearch_constants'
 class Fluent::ElasticsearchErrorHandler
   include Fluent::ElasticsearchConstants
 
-  attr_accessor :records, :bulk_message_count
   class ElasticsearchVersionMismatch < StandardError; end
   class ElasticsearchError < StandardError; end
 
-  def initialize(plugin, records = 0, bulk_message_count = 0)
+  def initialize(plugin)
     @plugin = plugin
-    @records = records
-    @bulk_message_count = bulk_message_count
   end
 
-  def handle_error(response, tag, records)
-    if records.length != response['items'].length
+  def handle_error(response, tag, chunk, bulk_message_count)
+    if bulk_message_count != response['items'].length
       raise ElasticsearchError, "The number of records submitted do not match the number returned. Unable to process bulk response"
     end
     retry_stream = Fluent::MultiEventStream.new
     stats = Hash.new(0)
-    response['items'].each_with_index do |item, index|
+    meta = {}
+    header = {}
+    chunk.msgpack_each do |rawrecord, time|
+      bulk_message = ''
+      next unless rawrecord.is_a? Hash
+      begin
+        # we need a deep copy for process_message to alter
+        processrecord = Marshal.load(Marshal.dump(rawrecord))
+        @plugin.process_message(tag, meta, header, time, processrecord, bulk_message)
+      rescue => e
+        stats[:bad_chunk_record] += 1
+        next
+      end
+      item = response['items'].shift
       if item.has_key?(@plugin.write_operation)
         write_operation = @plugin.write_operation
       elsif INDEX_OP == @plugin.write_operation && item.has_key?(CREATE_OP)
@@ -46,21 +56,18 @@ class Fluent::ElasticsearchErrorHandler
         stats[:duplicates] += 1
       when 400 == status
         stats[:bad_argument] += 1
-        record = records[index]
-        @plugin.router.emit_error_event(tag, record[:time], record[:record], '400 - Rejected by Elasticsearch')
+        @plugin.router.emit_error_event(tag, time, rawrecord, '400 - Rejected by Elasticsearch')
       else
-        retry_stream.add(records[index][:time], records[index][:record])
         if item[write_operation].has_key?('error') && item[write_operation]['error'].has_key?('type')
           type = item[write_operation]['error']['type']
+          stats[type] += 1
+          retry_stream.add(time, rawrecord)
         else
           # When we don't have a type field, something changed in the API
           # expected return values (ES 2.x)
           stats[:errors_bad_resp] += 1
-          record = records[index]
-          @plugin.router.emit_error_event(tag, record[:time], record[:record], status + '- No error type provided in the response')
-          next
+          @plugin.router.emit_error_event(tag, time, rawrecord, status.to_s + '- No error type provided in the response')
         end
-        stats[type] += 1
       end
     end
     @plugin.log.on_debug do

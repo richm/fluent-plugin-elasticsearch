@@ -325,24 +325,23 @@ class Fluent::ElasticsearchOutput < Fluent::ObjectBufferedOutput
   end
 
   def write_objects(tag, chunk)
+    bulk_message_count = 0
     bulk_message = ''
     header = {}
     meta = {}
-    @error = Fluent::ElasticsearchErrorHandler.new(self)
 
     records = []
     chunk.msgpack_each do |time, record|
-      @error.records += 1
       next unless record.is_a? Hash
       begin
         process_message(tag, meta, header, time, record, bulk_message)
-        records << { time: time, record: record }
+        bulk_message_count += 1
       rescue=>e
         router.emit_error_event(tag, time, record, e)
       end
     end
 
-    send_bulk(bulk_message, tag, records) unless bulk_message.empty?
+    send_bulk(bulk_message, tag, chunk, bulk_message_count) unless bulk_message.empty?
     bulk_message.clear
   end
 
@@ -411,7 +410,6 @@ class Fluent::ElasticsearchOutput < Fluent::ObjectBufferedOutput
     end
 
     append_record_to_messages(@write_operation, meta, header, record, bulk_message)
-    @error.bulk_message_count += 1
   end
 
   # returns [parent, child_key] of child described by path array in record's tree
@@ -423,11 +421,14 @@ class Fluent::ElasticsearchOutput < Fluent::ObjectBufferedOutput
 
   # send_bulk given a specific bulk request, the original tag,
   # and an array of hash records that have :time, :record
-  def send_bulk(data, tag, records)
+  def send_bulk(data, tag, chunk, bulk_message_count)
     retries = 0
     begin
       response = client.bulk body: data
-      @error.handle_error(response, tag, records) if response['errors']
+      if response['errors']
+        error = Fluent::ElasticsearchErrorHandler.new(self)
+        error.handle_error(response, tag, chunk, bulk_message_count)
+      end
     rescue RetryStreamError => e
       router.emit_stream(tag, e.retry_stream)
     rescue *client.transport.host_unreachable_exceptions => e
