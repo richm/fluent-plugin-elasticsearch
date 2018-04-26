@@ -11,7 +11,7 @@ class TestElasticsearchErrorHandler < Test::Unit::TestCase
     def initialize(log)
       @log = log
       @write_operation = 'index'
-      @error_events = []
+      @error_events = Fluent::MultiEventStream.new
     end
 
     def router
@@ -19,7 +19,7 @@ class TestElasticsearchErrorHandler < Test::Unit::TestCase
     end
 
     def emit_error_event(tag, time, record, e)
-        @error_events << record
+        @error_events.add(time, record)
     end
   end
 
@@ -58,7 +58,7 @@ class TestElasticsearchErrorHandler < Test::Unit::TestCase
       ]
      }))
     @handler.handle_error(response, 'atag', records)
-    assert_equal(1, @plugin.error_events.length)
+    assert_equal(1, @plugin.error_events.size)
   end
 
   def test_retry_error
@@ -130,9 +130,9 @@ class TestElasticsearchErrorHandler < Test::Unit::TestCase
     begin
       failed = false
       @handler.handle_error(response, 'atag', records)
-    rescue Fluent::ElasticsearchOutput::RetryRecordsError=>e
+    rescue Fluent::ElasticsearchOutput::RetryStreamError=>e
       failed = true
-      assert_equal 2, e.records.length
+      assert_equal 2, e.retry_stream.size
     end
     assert_true failed
 

@@ -18,13 +18,13 @@ require_relative 'elasticsearch_index_template'
 class Fluent::ElasticsearchOutput < Fluent::ObjectBufferedOutput
   class ConnectionFailure < StandardError; end
 
-  # RetryRecordsError privides a list of records to be
+  # RetryStreamError privides a stream to be
   # put back in the pipeline for cases where a bulk request
   # failed (e.g some records succeed while others failed)
-  class RetryRecordsError < StandardError
-    attr_reader :records
-    def initialize(records)
-        @records = records
+  class RetryStreamError < StandardError
+    attr_reader :retry_stream
+    def initialize(retry_stream)
+      @retry_stream = retry_stream
     end
   end
 
@@ -428,13 +428,8 @@ class Fluent::ElasticsearchOutput < Fluent::ObjectBufferedOutput
     begin
       response = client.bulk body: data
       @error.handle_error(response, tag, records) if response['errors']
-    rescue RetryRecordsError => e
-      es = Fluent::MultiEventStream.new.tap do |es|
-        e.records.each do |e|
-          es.add(e[:time], e[:record])
-        end
-      end
-      router.emit_stream(tag, es)
+    rescue RetryStreamError => e
+      router.emit_stream(tag, e.retry_stream)
     rescue *client.transport.host_unreachable_exceptions => e
       if retries < 2
         retries += 1

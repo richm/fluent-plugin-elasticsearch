@@ -1,3 +1,4 @@
+require 'fluent/event'
 require_relative 'elasticsearch_constants'
 
 class Fluent::ElasticsearchErrorHandler
@@ -17,7 +18,7 @@ class Fluent::ElasticsearchErrorHandler
     if records.length != response['items'].length
       raise ElasticsearchError, "The number of records submitted do not match the number returned. Unable to process bulk response"
     end
-    retry_records = []
+    retry_stream = Fluent::MultiEventStream.new
     stats = Hash.new(0)
     response['items'].each_with_index do |item, index|
       if item.has_key?(@plugin.write_operation)
@@ -48,7 +49,7 @@ class Fluent::ElasticsearchErrorHandler
         record = records[index]
         @plugin.router.emit_error_event(tag, record[:time], record[:record], '400 - Rejected by Elasticsearch')
       else
-        retry_records << records[index]
+        retry_stream.add(records[index][:time], records[index][:record])
         if item[write_operation].has_key?('error') && item[write_operation]['error'].has_key?('type')
           type = item[write_operation]['error']['type']
         else
@@ -67,6 +68,6 @@ class Fluent::ElasticsearchErrorHandler
       stats.each_pair { |key, value| msg << "#{value} #{key}" }
       @plugin.log.debug msg.join(', ')
     end
-    raise Fluent::ElasticsearchOutput::RetryRecordsError.new(retry_records) if retry_records.length > 0
+    raise Fluent::ElasticsearchOutput::RetryStreamError.new(retry_stream) if not retry_stream.empty?
   end
 end
