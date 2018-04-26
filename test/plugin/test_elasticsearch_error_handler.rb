@@ -58,7 +58,7 @@ class TestElasticsearchErrorHandler < Test::Unit::TestCase
       ]
      }))
     @handler.handle_error(response, 'atag', records)
-    assert_equal(1, @plugin.error_events.size)
+    assert_equal(1, @plugin.error_events.instance_variable_get(:@time_array).size)
   end
 
   def test_retry_error
@@ -132,7 +132,7 @@ class TestElasticsearchErrorHandler < Test::Unit::TestCase
       @handler.handle_error(response, 'atag', records)
     rescue Fluent::ElasticsearchOutput::RetryStreamError=>e
       failed = true
-      assert_equal 2, e.retry_stream.size
+      assert_equal 2, e.retry_stream.instance_variable_get(:@time_array).size
     end
     assert_true failed
 
