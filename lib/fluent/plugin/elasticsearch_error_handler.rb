@@ -19,7 +19,7 @@ class Fluent::ElasticsearchErrorHandler
     stats = Hash.new(0)
     meta = {}
     header = {}
-    chunk.msgpack_each do |rawrecord, time|
+    chunk.msgpack_each do |time, rawrecord|
       bulk_message = ''
       next unless rawrecord.is_a? Hash
       begin

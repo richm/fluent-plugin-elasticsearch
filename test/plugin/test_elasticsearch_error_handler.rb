@@ -35,7 +35,7 @@ class TestElasticsearchErrorHandler < Test::Unit::TestCase
       @index = 0
     end
     def msgpack_each
-      @records.each { |item| yield(item[:record],item[:time]) }
+      @records.each { |item| yield(item[:time],item[:record]) }
     end
   end
 
